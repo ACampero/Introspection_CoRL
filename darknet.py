@@ -6,6 +6,7 @@ from region_loss import RegionLoss
 from yolo_layer import YoloLayer
 from cfg import *
 #from layers.batchnorm.bn import BN2d
+import pdb
 
 class MaxPoolStride1(nn.Module):
     def __init__(self):
@@ -143,6 +144,7 @@ class Darknet(nn.Module):
                 if self.training:
                     pass
                 else:
+                    #pdb.set_trace()
                     boxes = self.models[ind](x)
                     out_boxes.append(boxes)
             elif block['type'] == 'cost':
@@ -152,7 +154,8 @@ class Darknet(nn.Module):
         if self.training:
             return loss
         else:
-            return out_boxes
+            #pdb.set_trace()
+            return out_boxes, [outputs[81], outputs[93], outputs[105]]
 
     def print_network(self):
         print_cfg(self.blocks)

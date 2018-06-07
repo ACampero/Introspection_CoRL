@@ -10,6 +10,7 @@ from torch.autograd import Variable
 import itertools
 import struct # get_image_size
 import imghdr # get_image_size
+import pdb
 
 def sigmoid(x):
     return 1.0/(math.exp(-x)+1.)
@@ -175,7 +176,7 @@ def get_region_boxes(output, conf_thresh, num_classes, anchors, num_anchors, onl
                         bh = hs[ind]
                         cls_max_conf = cls_max_confs[ind]
                         cls_max_id = cls_max_ids[ind]
-                        box = [bcx/w, bcy/h, bw/w, bh/h, det_conf, cls_max_conf, cls_max_id]
+                        box = [bcx/w, bcy/h, bw/w, bh/h, det_conf, cls_max_conf, cls_max_id, cy, cx, h/13]
                         if (not only_objectness) and validation:
                             for c in range(num_classes):
                                 tmp_conf = cls_confs[ind][c]
@@ -334,8 +335,10 @@ def do_detect(model, img, conf_thresh, nms_thresh, use_cuda=1):
     img = torch.autograd.Variable(img)
     t2 = time.time()
 
-    list_boxes = model(img)
+    list_boxes, convrep  = model(img)
+    pdb.set_trace()
     boxes = list_boxes[0][0] + list_boxes[1][0] + list_boxes[2][0]
+    
     t3 = time.time()
 
     boxes = nms(boxes, nms_thresh)
@@ -349,7 +352,7 @@ def do_detect(model, img, conf_thresh, nms_thresh, use_cuda=1):
         print('             nms : %f' % (t4 - t3))
         print('           total : %f' % (t4 - t0))
         print('-----------------------------------')
-    return boxes
+    return boxes, convrep
 
 def read_data_cfg(datacfg):
     options = dict()
