@@ -124,27 +124,51 @@ def optical_flow(img1,img2):
     #rgb = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
     return flow
 
-def generate_batch(word_m, train_size=.9):
+def generate_batch(train_size=.9):
     with open('./data/pretrained/corpus/lava.json') as f:
         data_pretrained = json.load(f, strict=False)
-    #indices = torch.randperm(len(data_pretrained))
-    #data_pretrained = [data_pretrained[ind] for ind in indices]
-    #train_iter, test_iter = data_pretrained[:train_size], data_pretrained[train_size:]
+    num_targets = [0 for i in range(len(lexicon))]
+    for case in data_pretrained:
+        if telescope in case['text']:
+            data_pretrained.remove(case)
+            continue
+        case['model_structs'] = parser(case['text'])
+        case['targets_pos'] = [struct[1] for struct in case['model_structs']]
+        case['targets_neg'] = []
+        for targ in case['targets_pos']:
+            num_targets[targ] += 1
+
+    ### Make Some baanced negative examples
+    for word in lexicon:
+        data_pretrained = [data_pretrained[ind] for ind in torch.randperm(len(data_pretrained))]
+        targ_neg = 0
+        case = 0
+        while targ_neg < num_targets[word]:
+            if word not in case['targets_pos']
+                case['targets_neg'].append(word)
+                targ_neg +=1
+
+    data_pretrained = [data_pretrained[ind] for ind in torch.randperm(len(data_pretrained))]
+    train_iter, test_iter = data_pretrained[:train_size*len(data_pretrained)], data_pretrained[train_size*len(data_pretrained):]
+
     #for i,case in enumerate(data_pretrained):
         #print(i, case['text'])
         #print(case['logicalForm'])
-    data_pos = [case for case in data_pretrained if word_m in case['text']]
-    data_neg = [case for case in data_pretrained if word_m not in case['text']]
-    indices = torch.randperm(len(data_pos))
-    train_iter = [data_pos[ind] for ind in indices[:int(train_size*len(data_pos))]] +[data_neg[ind] for ind in indices[:int(train_size*len(data_pos))]]
-    test_iter = [data_pos[ind] for ind in indices[int(train_size*len(data_pos)):]] +[data_neg[ind] for ind in indices[int(train_size*len(data_pos)):]]
-    
-    train_iter = [train_iter[ind] for ind in torch.randperm(len(train_iter))]
-    test_iter = [test_iter[ind] for ind in torch.randperm(len(test_iter))]
-    #pdb.set_trace()
     return train_iter, test_iter
 
-def train(word_m, hidden_size, optical_size, train_iter, epochs = 10):
+def parser(sentence):
+    #models = [approach, leave, look, hold,move, pick, put, on]#7
+    #lexicon = {'approached': 0, 'left': 1, 'looked': 2, 'held': 3, 'holding': 3, 'moved': 4, 'moving':4, 'picked':5, 'put':6}
+    #lexicon_obj = {'Danny': 0, 'Andrei': 0,'Someone': 0, 'Person': 0, 'person': 0, 'Yevgeni':0, 'chair': 56, 'bag': 24}
+    model_structs = []
+    for key in lexicon.keys():
+        if key in sentence:
+            word_obj = [lexicon_obj[x] if x in sentence[sentence.index(key):]][0]
+            model_structs.append([0, lexicon[key], word_obj])
+    return model_structs
+
+
+def train(hidden_size, optical_size, train_iter, epochs = 10):
     m = Darknet(cfgfile)
     m.load_weights(weightfile)
     m.print_network()
@@ -153,101 +177,48 @@ def train(word_m, hidden_size, optical_size, train_iter, epochs = 10):
 
     input_size = (255 + 2*optical_size**2)*2
 
-    #models = [approach, leave, look, hold,move, pick, put, on]#8
-    models = [word_rnn_tracker(input_size, hidden_size).cuda() for i in range(8)]
+    #models = [approach, leave, look, hold,move, pick, put, on]#7
+    models = [word_rnn_tracker(input_size, hidden_size).cuda() for i in range(len(lexicon))]
 
     learning_rate = .01
     criterion = nn.BCELoss()
     optimizer = torch.optim.Adam(model_rnn.parameters(), lr = learning_rate)
 
     for epoch in range(epochs):
-        for ind, batch in enumerate(train_iter): 
-            if 'visualFilename' in batch.keys():
-                video = './data/pretrained/corpus/clips/' + batch['visualFilename'] + '.avi'
-                #video = 'video1.mov'
+        for ind, case in enumerate(train_iter): 
+            if 'visualFilename' in case.keys():
+                video = './data/pretrained/corpus/clips/' + case['visualFilename'] + '.avi'
                 
-                targets, models = parser(batch['text'])
-                #target = 2*(word_m in batch['text'])-1
                 frames, all_boxes, all_convrep = detect(video, m)
-                if all_boxes == []:
-                    continue
 
-                model_rnn.zero_grad()
-                tracks, log_likelihood = object_tracker(frames, all_boxes, all_convrep, word, model_rnn, optical_size)
-                loss = log_likelihood*-1*target
-                loss.backward(retain_graph=False)
+                for model_rnn in models: 
+                    model_rnn.zero_grad()
+
+                tracks, log_likelihood = object_tracker(frames, all_boxes, all_convrep, case['model_structs'], models, optical_size)
+
+                loss= torch.Tensor([0])
+                for targ in case['targets_pos']:
+                    loss = loss + log_likelihood*-1
+                for tar in case['targets_neg']:
+                    loss = loss + log_likelihood 
+
+                loss.backward(retain_graph=False)                
                 optimizer.step()
                 #pdb.set_trace()
                 print('epoch', epoch, 'ind', ind, 'target', target, 'loss', loss.item())
 
-    return model_rnn, tracks
+    return models
 
-def object_tracker(frames, all_boxes, convrep, word, model_rnn, optical_size):
+def object_tracker(frames, all_boxes, convrep, model_structs, models, optical_size):
     detections = []
+    tracks = []
+    total_score = torch.Tensor([0])
     all_models = dict()
-    for i, object in enumerate(word):
-        #detections.append(preprocess(all_boxes, object)) ##All detections of same category
-        detections.append(all_boxes)
-    if len(detections)==1:
-        #time 0
-        forward_var = Variable(torch.log(torch.Tensor([all_boxes[0][item][5] for item in range(len(all_boxes[0]))])).cuda())
-        #pdb.set_trace()
-        for i, item in enumerate(detections[0][0]):
-            input = convrep[0][item[9]/2][:,:,item[7],item[8]].contiguous().view(-1) 
-            input = torch.cat((input,Variable(torch.zeros(2*optical_size**2).cuda())),0)
-            hidden = model_rnn.init_hidden()
-            output, hidden = model_rnn(input.view(1,1,-1), hidden)
-            all_models[(i)] = hidden
-            forward_var[i] = forward_var[i] + output[0,0,0]
-
-        #time t
-        best_tagid = [] ## All best paths
-        for t in range(1,len(all_boxes)):
-            for dim in len(detections):
-                trans_boxes = []
-                trans_boxes.append(detections[dim][t-1])
-                trans_boxes.append(detections[dim][t])   
-                transition = dist(trans_boxes)           
-            next = forward_var.expand(transition.size()) + transition
-            _, tag_id = torch.max(next,0)
-            best_tagid.append((tag_id.item()))
-            next = torch.sum(next,0)/next.numel()
-
-            forward_var = next
-
-            forward_var += Variable(torch.log(torch.Tensor([boxes[t][item][5] for item in range(len(boxes[t]))])).cuda()) 
-            all_models_new = dict() 
-            opt_flow = optical_flow(frames[t-1],frames[t])
-            for i, item in enumerate(detections[0][t]):
-                input = convrep[t][item[9]/2][:,:,item[7],item[8]].contiguous().view(-1)
-                opt_flow = crop_image(opt_flow, item, optical_size)
-                opt_flow = Variable(torch.from_numpy(opt_flow).contiguous().view(-1).cuda())
-                input =torch.cat((input,opt_flow),0)
-
-                hidden = all_models[(tag_id.item())]
-                output, hidden = model_rnn(input.view(1,1,-1), hidden)
-                all_models_new[(i)] = hidden
-                forward_var[i] = forward_var[i]+ output[0,0,0]
-            all_models = dict()             
-            for	key in all_models_new.keys():
-       	       	all_models[key] = (all_models_new[key][0].clone(),all_models_new[key][1].clone())
-            #all_models = copy.deepcopy(all_models_new) 
-
-        path_score , tag_id = torch.max(forward_var,1)
-        tag_id = tag_id.item()[0]
-        best_path = [tag_id]
-        for back_t in reversed(best_tagid):
-            tag_id = back_t[0][0][tag_id]
-            best_path.append(tag_id)
-        
-        best_path.reverse()
-        track = []
-        for i in range(len(best_path)):
-            track.append(boxes[i][best_path[i]]) 
-        tracks = [track]
-
-    else: ##2 detections= 2 objects
-        #time 0
+    for word in model_structs:
+        detections.append(preprocess(all_boxes, word[0])) ##All detections of same category
+        detections.append(preprocess(all_boxes, word[2]))
+        model_rnn = models[word[1]]
+        ##time 0
         for i,boxes in enumerate(detections):
             if i==0:
                 forward_aux1 = torch.log(torch.Tensor([boxes[0][item][5] for item in range(len(boxes[0]))])).view(-1,1)
@@ -268,7 +239,7 @@ def object_tracker(frames, all_boxes, convrep, word, model_rnn, optical_size):
                 output, hidden = model_rnn(input.view(1,1,-1),hidden)
                 all_models[(i,j)] = hidden
                 forward_var[i,j] = forward_var[i,j] + output[0,0,0]
-        #time t    
+        ##time t    
         best_tagid = [] ## All best paths
         for t in range(1,len(all_boxes)):
             distances = []
@@ -345,9 +316,8 @@ def object_tracker(frames, all_boxes, convrep, word, model_rnn, optical_size):
         for i in range(len(best_path)):
             track1.append(boxes[i][best_path[i][0]])
             track2.append(boxes[i][best_path[i][1]])
-        tracks = [track1,track2]     
-
-
+        tracks = tracks + [track1,track2]     
+        total_score = total_score + path_score 
     return tracks , path_score
         
 if __name__ == '__main__':
@@ -359,17 +329,74 @@ if __name__ == '__main__':
     hidden_size = 100
     optical_size = 10
     epochs = 10
-    lexicon = dict()
-    lexicon['picked-up'] = [0,0]
+    lexicon = {'approached': 0, 'left': 1, 'looked': 2, 'held': 3, 'holding': 3, 'moved': 4, 'moving':4, 'picked':5, 'put':6}
+    lexicon_obj = {'Danny': 0, 'Andrei': 0,'Someone': 0, 'Person': 0, 'person': 0, 'Yevgeni':0, 'chair': 56, 'bag': 24}
     
-    
-    train_iter, test_iter = generate_batch('picked-up')
+    train_iter, test_iter = generate_batch()
 
     class_names = load_class_names('data/coco.names')
     
-    model_trained, object_tracks = train('picked-up', hidden_size, optical_size, train_iter, epochs)
-
+    models_trained = train(hidden_size, optical_size, epochs)
+    pdb.set_trace()
     display_object(object_tracks, frames)
 
+'''
+#Words of only 1 object tracker
+if len(detections)==1:
+        #time 0
+        forward_var = Variable(torch.log(torch.Tensor([all_boxes[0][item][5] for item in range(len(all_boxes[0]))])).cuda())
+        #pdb.set_trace()
+        for i, item in enumerate(detections[0][0]):
+            input = convrep[0][item[9]/2][:,:,item[7],item[8]].contiguous().view(-1) 
+            input = torch.cat((input,Variable(torch.zeros(2*optical_size**2).cuda())),0)
+            hidden = model_rnn.init_hidden()
+            output, hidden = model_rnn(input.view(1,1,-1), hidden)
+            all_models[(i)] = hidden
+            forward_var[i] = forward_var[i] + output[0,0,0]
 
+        #time t
+        best_tagid = [] ## All best paths
+        for t in range(1,len(all_boxes)):
+            for dim in len(detections):
+                trans_boxes = []
+                trans_boxes.append(detections[dim][t-1])
+                trans_boxes.append(detections[dim][t])   
+                transition = dist(trans_boxes)           
+            next = forward_var.expand(transition.size()) + transition
+            _, tag_id = torch.max(next,0)
+            best_tagid.append((tag_id.item()))
+            next = torch.sum(next,0)/next.numel()
 
+            forward_var = next
+
+            forward_var += Variable(torch.log(torch.Tensor([boxes[t][item][5] for item in range(len(boxes[t]))])).cuda()) 
+            all_models_new = dict() 
+            opt_flow = optical_flow(frames[t-1],frames[t])
+            for i, item in enumerate(detections[0][t]):
+                input = convrep[t][item[9]/2][:,:,item[7],item[8]].contiguous().view(-1)
+                opt_flow = crop_image(opt_flow, item, optical_size)
+                opt_flow = Variable(torch.from_numpy(opt_flow).contiguous().view(-1).cuda())
+                input =torch.cat((input,opt_flow),0)
+
+                hidden = all_models[(tag_id.item())]
+                output, hidden = model_rnn(input.view(1,1,-1), hidden)
+                all_models_new[(i)] = hidden
+                forward_var[i] = forward_var[i]+ output[0,0,0]
+            all_models = dict()             
+            for key in all_models_new.keys():
+                all_models[key] = (all_models_new[key][0].clone(),all_models_new[key][1].clone())
+            #all_models = copy.deepcopy(all_models_new) 
+
+        path_score , tag_id = torch.max(forward_var,1)
+        tag_id = tag_id.item()[0]
+        best_path = [tag_id]
+        for back_t in reversed(best_tagid):
+            tag_id = back_t[0][0][tag_id]
+            best_path.append(tag_id)
+        
+        best_path.reverse()
+        track = []
+        for i in range(len(best_path)):
+            track.append(boxes[i][best_path[i]]) 
+        tracks = [track]
+'''
