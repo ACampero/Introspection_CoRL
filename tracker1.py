@@ -75,7 +75,7 @@ def dist(boxes_one,boxes_two):
 
 def object_tracker(boxes):
     ##Detect a single object tracker assuming all are detections of same category, that will be specified by the word.
-    pdb.set_trace()
+    #pdb.set_trace()
     forward_var = torch.Tensor([boxes[0][item][-4] for item in range(len(boxes[0]))])
     best_tagid = [] ## All best paths
     for t in range(1,len(boxes)):
@@ -106,7 +106,7 @@ if __name__ == '__main__':
     weightfile = 'yolov3.weights'
     #video = '00060-2633-2713.avi'
     video = 'video1.mov'
-    video = 'data/pretrained/corpus/clips/00028-1340-1430.avi'
+    #video = 'data/pretrained/corpus/clips/00028-1340-1430.avi'
     object = 0
 
     class_names = load_class_names('data/coco.names')

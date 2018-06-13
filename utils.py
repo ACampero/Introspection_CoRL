@@ -336,7 +336,6 @@ def do_detect(model, img, conf_thresh, nms_thresh, use_cuda=1):
     t2 = time.time()
 
     list_boxes, convrep  = model(img)
-    pdb.set_trace()
     boxes = list_boxes[0][0] + list_boxes[1][0] + list_boxes[2][0]
     
     t3 = time.time()
